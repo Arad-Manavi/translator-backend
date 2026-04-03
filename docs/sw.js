@@ -1,9 +1,5 @@
 const CACHE = "translator-v1";
-const ASSETS = [
-  "/translator-app/",
-  "/translator-app/index.html",
-  "/translator-app/manifest.json"
-];
+const ASSETS = ["/", "/index.html", "/manifest.json"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
