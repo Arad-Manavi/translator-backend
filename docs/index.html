@@ -596,7 +596,29 @@
   setupTyping(textB, "b");
 
   // ── TTS ───────────────────────────────────────────────────────────
-  if (speechSynthesis.onvoiceschanged !== undefined) speechSynthesis.onvoiceschanged = () => {};
+  // iOS Safari loads voices asynchronously — we wait for them to be ready
+  let voicesReady = false;
+
+  function loadVoices() {
+    const voices = speechSynthesis.getVoices();
+    if (voices.length > 0) voicesReady = true;
+  }
+  loadVoices();
+  speechSynthesis.onvoiceschanged = loadVoices;
+
+  // On iOS, trigger voice list load by a silent utterance on first user gesture
+  let iosPrimed = false;
+  function primeIOSVoices() {
+    if (iosPrimed) return;
+    iosPrimed = true;
+    const silent = new SpeechSynthesisUtterance("");
+    silent.volume = 0;
+    speechSynthesis.speak(silent);
+    speechSynthesis.cancel();
+    setTimeout(loadVoices, 500);
+  }
+  document.addEventListener("touchstart", primeIOSVoices, { once: true });
+  document.addEventListener("click", primeIOSVoices, { once: true });
 
   function getBestVoice(locale) {
     const voices = speechSynthesis.getVoices();
@@ -607,24 +629,38 @@
         || voices.find(v => v.lang.startsWith(lang))
         || null;
   }
+
   function checkVoice(locale) {
     const voices = speechSynthesis.getVoices();
+    if (voices.length === 0) return true; // voices not loaded yet — try anyway
     const lang = locale.split("-")[0];
     return voices.some(v => v.lang === locale || v.lang.startsWith(lang));
   }
+
   function speakText(text, langCode) {
     if (!text) return;
     speechSynthesis.cancel();
     const locale = TTS_LOCALE[langCode] || "en-US";
-    if (!checkVoice(locale)) {
+
+    // If voices haven't loaded yet, just attempt to speak anyway
+    // Safari will use the system default or the installed voice
+    const voices = speechSynthesis.getVoices();
+    if (voices.length > 0 && !checkVoice(locale)) {
       voiceHelp.style.display = "block";
       return;
     }
+
     const utt = new SpeechSynthesisUtterance(text);
     utt.lang = locale;
     const v = getBestVoice(locale);
     if (v) utt.voice = v;
     utt.rate = 0.88;
+    utt.onerror = (e) => {
+      // Only show voice help for actual voice-not-found errors
+      if (e.error === "voice-unavailable" || e.error === "not-allowed") {
+        voiceHelp.style.display = "block";
+      }
+    };
     speechSynthesis.speak(utt);
   }
 
