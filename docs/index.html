@@ -493,6 +493,10 @@
 
 <p id="install-hint"></p>
 
+<!-- Temporary voice debugger — remove after fixing -->
+<div id="voice-debug" style="position:fixed;bottom:0;left:0;right:0;background:#111;color:#0f0;font-size:11px;padding:8px 12px;max-height:35vh;overflow-y:auto;display:none;z-index:999;font-family:monospace;"></div>
+<button id="voice-debug-btn" style="position:fixed;top:6px;right:6px;background:#333;color:white;border:none;padding:5px 10px;font-size:11px;border-radius:6px;z-index:1000;touch-action:manipulation;">Debug Voices</button>
+
 <script>
   const BACKEND_URL = "https://translator-backend-mgzd.onrender.com";
 
@@ -812,7 +816,23 @@
   setTextareaHeight();
   window.addEventListener("resize", setTextareaHeight);
 
-  // ── PWA ───────────────────────────────────────────────────────────
+  // ── Voice debugger (temporary) ────────────────────────────────────
+  document.getElementById("voice-debug-btn").addEventListener("click", () => {
+    const box = document.getElementById("voice-debug");
+    box.style.display = box.style.display === "none" ? "block" : "none";
+    const voices = speechSynthesis.getVoices();
+    if (voices.length === 0) {
+      box.innerHTML = "⚠ No voices loaded yet. Try tapping elsewhere first, then tap Debug again.";
+      return;
+    }
+    const fa = voices.filter(v => v.lang.startsWith("fa") || v.name.toLowerCase().includes("persian") || v.name.toLowerCase().includes("farsi"));
+    let html = `<b>Total voices: ${voices.length}</b><br>`;
+    html += fa.length > 0
+      ? `<b style="color:#0f0">Persian voices found (${fa.length}):</b><br>` + fa.map(v => `• ${v.name} [${v.lang}] local:${v.localService}`).join("<br>")
+      : `<b style="color:#f44">NO Persian voices found</b><br>`;
+    html += `<br><b>All voices:</b><br>` + voices.map(v => `• ${v.name} [${v.lang}]`).join("<br>");
+    box.innerHTML = html;
+  });
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
   if (/iphone|ipad|ipod/i.test(navigator.userAgent) && !window.navigator.standalone) {
     document.getElementById("install-hint").textContent = 'Tap Share → "Add to Home Screen" to install';
