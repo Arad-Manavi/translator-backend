@@ -14,6 +14,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@300;400;500&display=swap" rel="stylesheet"/>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    button, select { touch-action: manipulation; }
 
     :root {
       --bg:        #1a1f2e;
@@ -522,6 +523,12 @@
   let activeSide = null;
   let recognition = null;
   let typingTimer = null;
+  let pendingSpeak = null; // iOS: queued text waiting for user tap
+
+  function highlightSpeakBtn(btn) {
+    btn.style.color = "#fbbc04";
+    btn.title = "Tap to hear translation";
+  }
 
   // ── Labels & directions ───────────────────────────────────────────
   function updateLabels() {
@@ -576,7 +583,16 @@
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       dstTA.value = data.translation;
-      if (autoSpeak) speakText(data.translation, toLang);
+      // Queue for auto-speak — actual speak happens on next user tap on iOS
+      // On non-iOS browsers, speak immediately
+      if (autoSpeak) {
+        if (/iphone|ipad|ipod/i.test(navigator.userAgent)) {
+          pendingSpeak = { text: data.translation, lang: toLang };
+          highlightSpeakBtn(sourceSide === "a" ? speakBBtn : speakABtn);
+        } else {
+          speakText(data.translation, toLang);
+        }
+      }
     } catch(e) {
       dstTA.value = "Translation failed — check connection.";
     }
@@ -642,30 +658,54 @@
     speechSynthesis.cancel();
     const locale = TTS_LOCALE[langCode] || "en-US";
 
-    // If voices haven't loaded yet, just attempt to speak anyway
-    // Safari will use the system default or the installed voice
     const voices = speechSynthesis.getVoices();
     if (voices.length > 0 && !checkVoice(locale)) {
       voiceHelp.style.display = "block";
       return;
     }
 
-    const utt = new SpeechSynthesisUtterance(text);
-    utt.lang = locale;
-    const v = getBestVoice(locale);
-    if (v) utt.voice = v;
-    utt.rate = 0.88;
-    utt.onerror = (e) => {
-      // Only show voice help for actual voice-not-found errors
-      if (e.error === "voice-unavailable" || e.error === "not-allowed") {
-        voiceHelp.style.display = "block";
-      }
-    };
+    function doSpeak() {
+      const utt = new SpeechSynthesisUtterance(text);
+      utt.lang = locale;
+      const v = getBestVoice(locale);
+      if (v) utt.voice = v;
+      utt.rate = 0.88;
+      utt.onerror = (e) => {
+        if (e.error === "voice-unavailable" || e.error === "not-allowed") {
+          voiceHelp.style.display = "block";
+        }
+      };
+      return utt;
+    }
+
+    const utt = doSpeak();
+    let started = false;
+    utt.onstart = () => { started = true; };
+
     speechSynthesis.speak(utt);
+
+    // iOS sometimes silently fails on first speak for slower-loading voices (e.g. Persian)
+    // If speech hasn't started after 400ms, cancel and retry once
+    setTimeout(() => {
+      if (!started) {
+        speechSynthesis.cancel();
+        setTimeout(() => {
+          speechSynthesis.speak(doSpeak());
+        }, 100);
+      }
+    }, 400);
   }
 
-  speakABtn.addEventListener("click", () => speakText(textA.value, langA.value));
-  speakBBtn.addEventListener("click", () => speakText(textB.value, langB.value));
+  speakABtn.addEventListener("click", () => {
+    pendingSpeak = null;
+    speakABtn.style.color = "";
+    speakText(textA.value, langA.value);
+  });
+  speakBBtn.addEventListener("click", () => {
+    pendingSpeak = null;
+    speakBBtn.style.color = "";
+    speakText(textB.value, langB.value);
+  });
   document.getElementById("voice-help-close").addEventListener("click", () => { voiceHelp.style.display = "none"; });
 
   // ── Microphone ────────────────────────────────────────────────────
