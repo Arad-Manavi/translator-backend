@@ -587,16 +587,7 @@
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       dstTA.value = data.translation;
-      // Queue for auto-speak — actual speak happens on next user tap on iOS
-      // On non-iOS browsers, speak immediately
-      if (autoSpeak) {
-        if (/iphone|ipad|ipod/i.test(navigator.userAgent)) {
-          pendingSpeak = { text: data.translation, lang: toLang };
-          highlightSpeakBtn(sourceSide === "a" ? speakBBtn : speakABtn);
-        } else {
-          speakText(data.translation, toLang);
-        }
-      }
+      if (autoSpeak) speakText(data.translation, toLang);
     } catch(e) {
       dstTA.value = "Translation failed — check connection.";
     }
@@ -661,10 +652,17 @@
     if (!text) return;
     speechSynthesis.cancel();
     const locale = TTS_LOCALE[langCode] || "en-US";
-
     const voices = speechSynthesis.getVoices();
-    if (voices.length > 0 && !checkVoice(locale)) {
-      voiceHelp.style.display = "block";
+    const browserHasVoice = voices.length > 0 && checkVoice(locale);
+
+    if (!browserHasVoice) {
+      // Use backend Google Translate TTS for unsupported voices (e.g. Persian on iOS)
+      const url = BACKEND_URL + "/tts?text=" + encodeURIComponent(text) + "&lang=" + langCode;
+      const audio = new Audio(url);
+      audio.playbackRate = 0.95;
+      audio.play().catch(() => {
+        voiceHelp.style.display = "block";
+      });
       return;
     }
 
@@ -685,17 +683,12 @@
     const utt = doSpeak();
     let started = false;
     utt.onstart = () => { started = true; };
-
     speechSynthesis.speak(utt);
 
-    // iOS sometimes silently fails on first speak for slower-loading voices (e.g. Persian)
-    // If speech hasn't started after 400ms, cancel and retry once
     setTimeout(() => {
       if (!started) {
         speechSynthesis.cancel();
-        setTimeout(() => {
-          speechSynthesis.speak(doSpeak());
-        }, 100);
+        setTimeout(() => speechSynthesis.speak(doSpeak()), 100);
       }
     }, 400);
   }
