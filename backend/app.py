@@ -1,8 +1,6 @@
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from deep_translator import GoogleTranslator
-import urllib.request
-import urllib.parse
 
 app = Flask(__name__)
 CORS(app)
@@ -32,28 +30,41 @@ def translate():
 
 @app.route("/tts", methods=["GET"])
 def tts():
+    import asyncio
+    import edge_tts
+    import io
+
     text = request.args.get("text", "").strip()
     lang = request.args.get("lang", "en")
     if not text:
         return jsonify({"error": "No text provided"}), 400
 
-    # Google TTS uses locale codes, not plain language codes
-    TTS_LANG_MAP = {
-        "en": "en-US", "fa": "fa-IR", "ar": "ar-SA", "fr": "fr-FR",
-        "es": "es-ES", "de": "de-DE", "zh-CN": "zh-CN", "ru": "ru-RU",
-        "tr": "tr-TR", "ur": "ur-PK", "hi": "hi-IN",
+    # Microsoft Edge TTS voices — high quality, free, Persian supported
+    VOICE_MAP = {
+        "en":    "en-US-JennyNeural",
+        "fa":    "fa-IR-DilaraNeural",
+        "ar":    "ar-SA-ZariyahNeural",
+        "fr":    "fr-FR-DeniseNeural",
+        "es":    "es-ES-ElviraNeural",
+        "de":    "de-DE-KatjaNeural",
+        "zh-CN": "zh-CN-XiaoxiaoNeural",
+        "ru":    "ru-RU-SvetlanaNeural",
+        "tr":    "tr-TR-EmelNeural",
+        "ur":    "ur-PK-UzmaNeural",
+        "hi":    "hi-IN-SwaraNeural",
     }
-    tts_lang = TTS_LANG_MAP.get(lang, lang)
+    voice = VOICE_MAP.get(lang, "en-US-JennyNeural")
 
-    encoded = urllib.parse.quote(text)
-    url = f"https://translate.googleapis.com/translate_tts?ie=UTF-8&q={encoded}&tl={tts_lang}&client=gtx&ttsspeed=0.9"
+    async def generate():
+        buf = io.BytesIO()
+        communicate = edge_tts.Communicate(text, voice, rate="-5%")
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                buf.write(chunk["data"])
+        return buf.getvalue()
+
     try:
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://translate.google.com"
-        })
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            audio = resp.read()
+        audio = asyncio.run(generate())
         return Response(audio, mimetype="audio/mpeg", headers={
             "Cache-Control": "no-cache",
             "Access-Control-Allow-Origin": "*"
