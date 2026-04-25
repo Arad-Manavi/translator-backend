@@ -522,7 +522,8 @@
   let activeSide = null;
   let recognition = null;
   let typingTimer = null;
-  let pendingSpeak = null; // iOS: queued text waiting for user tap
+  let pendingSpeak = null;
+  let pendingAudio = null;
 
   function highlightSpeakBtn(btn) {
     btn.style.color = "#fbbc04";
@@ -582,7 +583,26 @@
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       dstTA.value = data.translation;
-      if (autoSpeak) speakText(data.translation, toLang);
+
+      const voices = speechSynthesis.getVoices();
+      const locale = TTS_LOCALE[toLang] || "en-US";
+      const browserHasVoice = voices.length > 0 && checkVoice(locale);
+      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+      if (autoSpeak) {
+        if (!browserHasVoice && isIOS) {
+          // iOS blocks Audio.play() from async — pre-load src and highlight speak btn
+          // so one tap plays it directly from a user gesture
+          const url = BACKEND_URL + "/tts?text=" + encodeURIComponent(data.translation) + "&lang=" + toLang;
+          pendingAudio = new Audio(url);
+          pendingAudio.playbackRate = 0.95;
+          const dstSpeakBtn = sourceSide === "a" ? speakBBtn : speakABtn;
+          dstSpeakBtn.style.color = "#fbbc04";
+          dstSpeakBtn.title = "Tap to hear";
+        } else {
+          speakText(data.translation, toLang);
+        }
+      }
     } catch(e) {
       dstTA.value = "Translation failed — check connection.";
     }
@@ -693,15 +713,33 @@
     }, 400);
   }
 
-  speakABtn.addEventListener("click", () => {
-    pendingSpeak = null;
+  function clearPendingAudio() {
+    pendingAudio = null;
     speakABtn.style.color = "";
-    speakText(textA.value, langA.value);
+    speakBBtn.style.color = "";
+    speakABtn.title = "";
+    speakBBtn.title = "";
+  }
+
+  speakABtn.addEventListener("click", () => {
+    if (pendingAudio) {
+      const a = pendingAudio;
+      clearPendingAudio();
+      a.play().catch(() => { voiceHelp.style.display = "block"; });
+    } else {
+      clearPendingAudio();
+      speakText(textA.value, langA.value);
+    }
   });
   speakBBtn.addEventListener("click", () => {
-    pendingSpeak = null;
-    speakBBtn.style.color = "";
-    speakText(textB.value, langB.value);
+    if (pendingAudio) {
+      const a = pendingAudio;
+      clearPendingAudio();
+      a.play().catch(() => { voiceHelp.style.display = "block"; });
+    } else {
+      clearPendingAudio();
+      speakText(textB.value, langB.value);
+    }
   });
   document.getElementById("voice-help-close").addEventListener("click", () => { voiceHelp.style.display = "none"; });
 
