@@ -656,11 +656,17 @@
         || null;
   }
 
+  // Languages confirmed not available in iOS Safari Web Speech API
+  const FORCE_BACKEND_TTS = new Set(["fa", "ur"]);
+
   function checkVoice(locale) {
+    // If this language is known to be missing on iOS, skip browser TTS entirely
+    const langCode = locale.split("-")[0];
+    if (FORCE_BACKEND_TTS.has(langCode)) return false;
     const voices = speechSynthesis.getVoices();
-    if (voices.length === 0) return true; // voices not loaded yet — try anyway
-    const lang = locale.split("-")[0];
-    return voices.some(v => v.lang === locale || v.lang.startsWith(lang));
+    if (voices.length === 0) return true;
+    // Exact locale match only — avoid false positives from startsWith
+    return voices.some(v => v.lang === locale || v.lang === langCode);
   }
 
   function speakText(text, langCode) {
