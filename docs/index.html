@@ -522,13 +522,6 @@
   let activeSide = null;
   let recognition = null;
   let typingTimer = null;
-  let pendingSpeak = null;
-  let pendingAudio = null;
-
-  function highlightSpeakBtn(btn) {
-    btn.style.color = "#fbbc04";
-    btn.title = "Tap to hear translation";
-  }
 
   // ── Labels & directions ───────────────────────────────────────────
   function updateLabels() {
@@ -584,21 +577,14 @@
       if (data.error) throw new Error(data.error);
       dstTA.value = data.translation;
 
-      const voices = speechSynthesis.getVoices();
-      const locale = TTS_LOCALE[toLang] || "en-US";
-      const browserHasVoice = voices.length > 0 && checkVoice(locale);
-      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-
       if (autoSpeak) {
+        const voices = speechSynthesis.getVoices();
+        const locale = TTS_LOCALE[toLang] || "en-US";
+        const browserHasVoice = voices.length > 0 && checkVoice(locale);
+        const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
         if (!browserHasVoice && isIOS) {
-          // iOS blocks Audio.play() from async — pre-load src and highlight speak btn
-          // so one tap plays it directly from a user gesture
-          const url = BACKEND_URL + "/tts?text=" + encodeURIComponent(data.translation) + "&lang=" + toLang;
-          pendingAudio = new Audio(url);
-          pendingAudio.playbackRate = 0.95;
-          const dstSpeakBtn = sourceSide === "a" ? speakBBtn : speakABtn;
-          dstSpeakBtn.style.color = "#fbbc04";
-          dstSpeakBtn.title = "Tap to hear";
+          const dstBtn = sourceSide === "a" ? speakBBtn : speakABtn;
+          queueBackendAudio(data.translation, toLang, dstBtn);
         } else {
           speakText(data.translation, toLang);
         }
@@ -663,81 +649,91 @@
     return voices.some(v => v.lang === locale || v.lang.startsWith(lang));
   }
 
+  // pendingAudio holds a pre-fetched Audio object waiting for a user tap on iOS
+  let pendingAudio = null;
+  let pendingAudioBtn = null; // which speak btn should drain it
+
+  function clearPending() {
+    pendingAudio = null;
+    pendingAudioBtn = null;
+    speakABtn.style.color = "";
+    speakBBtn.style.color = "";
+  }
+
+  // Build a backend TTS Audio object (just sets src, does NOT play yet)
+  function buildBackendAudio(text, langCode) {
+    const url = BACKEND_URL + "/tts?text=" + encodeURIComponent(text) + "&lang=" + langCode;
+    const audio = new Audio(url);
+    audio.playbackRate = 0.95;
+    return audio;
+  }
+
+  // Play audio that was pre-built — MUST be called from a direct tap handler
+  function playPendingAudio(audio) {
+    audio.play().catch((err) => {
+      if (err.name !== "NotAllowedError") {
+        voiceHelp.style.display = "block";
+      }
+    });
+  }
+
+  // speakText: called from direct tap handlers only (speak buttons, mic end)
+  // For iOS + backend TTS: audio.play() is safe here since we're in a tap handler
   function speakText(text, langCode) {
     if (!text) return;
     speechSynthesis.cancel();
     voiceHelp.style.display = "none";
+    clearPending();
+
     const locale = TTS_LOCALE[langCode] || "en-US";
     const voices = speechSynthesis.getVoices();
     const browserHasVoice = voices.length > 0 && checkVoice(locale);
 
     if (!browserHasVoice) {
-      // Use backend Google Translate TTS for voices not available in browser
-      const url = BACKEND_URL + "/tts?text=" + encodeURIComponent(text) + "&lang=" + langCode;
-      const audio = new Audio(url);
-      audio.playbackRate = 0.95;
-      audio.play().catch((err) => {
-        console.error("Audio play failed:", err);
-        // Only show error if it's not an autoplay policy issue
-        if (err.name !== "NotAllowedError") {
-          voiceHelp.style.display = "block";
-        }
-      });
+      // Backend TTS — play directly since this is always called from a tap
+      playPendingAudio(buildBackendAudio(text, langCode));
       return;
     }
 
+    // Browser TTS
     function doSpeak() {
       const utt = new SpeechSynthesisUtterance(text);
       utt.lang = locale;
       const v = getBestVoice(locale);
       if (v) utt.voice = v;
       utt.rate = 0.88;
-      utt.onerror = (e) => {
-        if (e.error === "voice-unavailable" || e.error === "not-allowed") {
-          voiceHelp.style.display = "block";
-        }
-      };
+      utt.onerror = () => { voiceHelp.style.display = "block"; };
       return utt;
     }
-
     const utt = doSpeak();
     let started = false;
     utt.onstart = () => { started = true; };
     speechSynthesis.speak(utt);
-
     setTimeout(() => {
-      if (!started) {
-        speechSynthesis.cancel();
-        setTimeout(() => speechSynthesis.speak(doSpeak()), 100);
-      }
+      if (!started) { speechSynthesis.cancel(); setTimeout(() => speechSynthesis.speak(doSpeak()), 100); }
     }, 400);
   }
 
-  function clearPendingAudio() {
-    pendingAudio = null;
-    speakABtn.style.color = "";
-    speakBBtn.style.color = "";
-    speakABtn.title = "";
-    speakBBtn.title = "";
+  // After async translation, queue audio for iOS instead of playing immediately
+  function queueBackendAudio(text, langCode, speakBtn) {
+    clearPending();
+    pendingAudio = buildBackendAudio(text, langCode);
+    pendingAudioBtn = speakBtn;
+    speakBtn.style.color = "#fbbc04"; // glow yellow to signal "tap to hear"
   }
 
+  // Speak buttons — always a direct user tap, safe to play Audio on iOS
   speakABtn.addEventListener("click", () => {
-    if (pendingAudio) {
-      const a = pendingAudio;
-      clearPendingAudio();
-      a.play().catch(() => { voiceHelp.style.display = "block"; });
+    if (pendingAudio && pendingAudioBtn === speakABtn) {
+      const a = pendingAudio; clearPending(); playPendingAudio(a);
     } else {
-      clearPendingAudio();
       speakText(textA.value, langA.value);
     }
   });
   speakBBtn.addEventListener("click", () => {
-    if (pendingAudio) {
-      const a = pendingAudio;
-      clearPendingAudio();
-      a.play().catch(() => { voiceHelp.style.display = "block"; });
+    if (pendingAudio && pendingAudioBtn === speakBBtn) {
+      const a = pendingAudio; clearPending(); playPendingAudio(a);
     } else {
-      clearPendingAudio();
       speakText(textB.value, langB.value);
     }
   });
