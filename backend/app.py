@@ -36,9 +36,17 @@ def tts():
     lang = request.args.get("lang", "en")
     if not text:
         return jsonify({"error": "No text provided"}), 400
-    # Google Translate TTS endpoint — same voice used on translate.google.com
+
+    # Google TTS uses locale codes, not plain language codes
+    TTS_LANG_MAP = {
+        "en": "en-US", "fa": "fa-IR", "ar": "ar-SA", "fr": "fr-FR",
+        "es": "es-ES", "de": "de-DE", "zh-CN": "zh-CN", "ru": "ru-RU",
+        "tr": "tr-TR", "ur": "ur-PK", "hi": "hi-IN",
+    }
+    tts_lang = TTS_LANG_MAP.get(lang, lang)
+
     encoded = urllib.parse.quote(text)
-    url = f"https://translate.googleapis.com/translate_tts?ie=UTF-8&q={encoded}&tl={lang}&client=gtx&ttsspeed=0.9"
+    url = f"https://translate.googleapis.com/translate_tts?ie=UTF-8&q={encoded}&tl={tts_lang}&client=gtx&ttsspeed=0.9"
     try:
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0",
