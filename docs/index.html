@@ -484,18 +484,13 @@
 </div>
 
 <!-- Voice help toast -->
-<div id="voice-help">
+<div id="voice-help" style="display:none;">
   <button id="voice-help-close">×</button>
-  <strong>⚠ Voice not installed for this language</strong>
-  Windows: Start → Settings → Time &amp; Language → Speech → Add voices → search the language → Add, then restart Chrome.<br>
-  iPhone: Settings → Accessibility → Spoken Content → Voices → find the language → download Enhanced voice.
+  <strong>⚠ Could not play audio</strong>
+  The backend TTS failed to load. Check your internet connection and try again.
 </div>
 
 <p id="install-hint"></p>
-
-<!-- Temporary voice debugger — remove after fixing -->
-<div id="voice-debug" style="position:fixed;bottom:0;left:0;right:0;background:#111;color:#0f0;font-size:11px;padding:8px 12px;max-height:35vh;overflow-y:auto;display:none;z-index:999;font-family:monospace;"></div>
-<button id="voice-debug-btn" style="position:fixed;top:6px;right:6px;background:#333;color:white;border:none;padding:5px 10px;font-size:11px;border-radius:6px;z-index:1000;touch-action:manipulation;">Debug Voices</button>
 
 <script>
   const BACKEND_URL = "https://translator-backend-mgzd.onrender.com";
@@ -651,17 +646,22 @@
   function speakText(text, langCode) {
     if (!text) return;
     speechSynthesis.cancel();
+    voiceHelp.style.display = "none";
     const locale = TTS_LOCALE[langCode] || "en-US";
     const voices = speechSynthesis.getVoices();
     const browserHasVoice = voices.length > 0 && checkVoice(locale);
 
     if (!browserHasVoice) {
-      // Use backend Google Translate TTS for unsupported voices (e.g. Persian on iOS)
+      // Use backend Google Translate TTS for voices not available in browser
       const url = BACKEND_URL + "/tts?text=" + encodeURIComponent(text) + "&lang=" + langCode;
       const audio = new Audio(url);
       audio.playbackRate = 0.95;
-      audio.play().catch(() => {
-        voiceHelp.style.display = "block";
+      audio.play().catch((err) => {
+        console.error("Audio play failed:", err);
+        // Only show error if it's not an autoplay policy issue
+        if (err.name !== "NotAllowedError") {
+          voiceHelp.style.display = "block";
+        }
       });
       return;
     }
@@ -809,23 +809,23 @@
   setTextareaHeight();
   window.addEventListener("resize", setTextareaHeight);
 
-  // ── Voice debugger (temporary) ────────────────────────────────────
-  document.getElementById("voice-debug-btn").addEventListener("click", () => {
-    const box = document.getElementById("voice-debug");
-    box.style.display = box.style.display === "none" ? "block" : "none";
-    const voices = speechSynthesis.getVoices();
-    if (voices.length === 0) {
-      box.innerHTML = "⚠ No voices loaded yet. Try tapping elsewhere first, then tap Debug again.";
-      return;
-    }
-    const fa = voices.filter(v => v.lang.startsWith("fa") || v.name.toLowerCase().includes("persian") || v.name.toLowerCase().includes("farsi"));
-    let html = `<b>Total voices: ${voices.length}</b><br>`;
-    html += fa.length > 0
-      ? `<b style="color:#0f0">Persian voices found (${fa.length}):</b><br>` + fa.map(v => `• ${v.name} [${v.lang}] local:${v.localService}`).join("<br>")
-      : `<b style="color:#f44">NO Persian voices found</b><br>`;
-    html += `<br><b>All voices:</b><br>` + voices.map(v => `• ${v.name} [${v.lang}]`).join("<br>");
-    box.innerHTML = html;
-  });
+  // ── iOS Audio unlock ──────────────────────────────────────────────
+  // iOS requires a user gesture to unlock Audio playback.
+  // We create and immediately pause a silent audio context on first tap
+  // so subsequent Audio() plays work without a direct gesture.
+  let audioUnlocked = false;
+  let unlockedAudio = null;
+
+  function unlockAudio() {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+    unlockedAudio = new Audio();
+    unlockedAudio.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+    unlockedAudio.play().catch(() => {});
+  }
+  document.addEventListener("touchstart", unlockAudio, { once: true });
+  document.addEventListener("click", unlockAudio, { once: true });
+
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
   if (/iphone|ipad|ipod/i.test(navigator.userAgent) && !window.navigator.standalone) {
     document.getElementById("install-hint").textContent = 'Tap Share → "Add to Home Screen" to install';
